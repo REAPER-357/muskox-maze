@@ -1098,7 +1098,9 @@ function showDead(){
   setOverlay('dead');
 }
 function respawn(){
-  resetPlayer();resetEnemies();drops=[];
+  // respawn where you fell: stay put, clear the pitch/joystick, push enemies away and refill torches
+  pitch=0;lastTile=-1;joy.x=joy.y=0;resetEnemies();drops=[];inv=torchMax();torchT=torchEvery();
+  toast('You are back. Torches refilled.');
   $('danger').style.opacity=0;setOverlay(null);
 }
 function win(){
