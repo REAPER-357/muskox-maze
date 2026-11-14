@@ -187,7 +187,7 @@ body.peaceful .dangerOnly{display:none!important}
     <button class="btn alt" id="bSetupSettings"><svg class="ic"><use href="#i-gear"/></svg>Settings</button>
     <span id="best"></span>
   </div>
-  <div class="hint">Left thumb: drag to walk and strafe. Right thumb: drag to look around. Tap the minimap for the full map. Dangerous and Hardcore: collect torches, drop one to banish enemies within 8 tiles. Desktop: WASD, drag to look, Space / F torch, M map, Esc pause.<br><span id="lifeDeaths"></span></div>
+  <div class="hint">Left thumb: drag to walk and strafe. Right thumb: drag to look around. Tap the minimap for the full map. Dangerous and Hardcore: collect torches, drop one to banish enemies within 8 tiles. Desktop: WASD to move, mouse to look, left click or Space / F for a torch (see Settings), M map, Esc pause.<br><span id="lifeDeaths"></span></div>
 </div></div>
 
 <!-- SETTINGS (template style) -->
@@ -215,13 +215,25 @@ body.peaceful .dangerOnly{display:none!important}
     </div>
     <div class="row" style="margin-bottom:2px"><label class="t" style="min-width:64px">Darkness</label><input type="range" id="dark" min="0" max="100" step="1"><b id="darkV" style="min-width:42px;text-align:right">0%</b></div>
     <div class="muted" id="darkNote" style="margin:0"></div></div>
+  <div class="pan"><span class="lbl">Sound</span>
+    <div class="row" style="margin:4px 0"><label class="t">Music</label><input type="range" id="musVol" min="0" max="100"><b id="musV" style="min-width:42px;text-align:right">60%</b></div>
+    <div class="row" style="margin:4px 0"><label class="t">Effects</label><input type="range" id="sfxVol" min="0" max="100"><b id="sfxV" style="min-width:42px;text-align:right">80%</b></div>
+    <div class="row" style="margin:4px 0"><label class="t">Fun music</label>
+      <div class="seg" data-key="calm"><button data-v="rain">Rain</button><button data-v="dizi">Dizi flute</button><button data-v="both">Both</button></div></div>
+    <div class="muted" style="margin:0">Horror plays a dark ambient track with a heartbeat that races when enemies close in. Fun plays calm rain and/or dizi flute.</div></div>
   <div class="pan"><span class="lbl">Controls and HUD</span>
     <div class="row" style="margin:4px 0"><label class="t">Look speed</label><input type="range" id="sens" min="0.4" max="2.5" step="0.1"></div>
     <div class="row" style="margin:4px 0">
       <label class="tg"><input type="checkbox" id="invert"> Invert look</label>
       <label class="tg"><input type="checkbox" id="optMap"> Minimap</label>
       <label class="tg"><input type="checkbox" id="optComp"> Compass</label>
-    </div></div>
+    </div>
+    <span class="lbl" style="margin-top:8px">Computer controls</span>
+    <div class="seg" data-key="ctrl">
+      <button data-v="kb">Keyboard only</button>
+      <button data-v="kbm">Keyboard + Mouse</button>
+    </div>
+    <div class="muted" style="margin:6px 0 0">Keyboard only: W A S D move, Q / E or arrow keys look, Space or F drops a torch. Keyboard + Mouse: mouse looks (click the game to capture it), left click or Alt + left click drops a torch. M opens the map, Esc pauses.</div></div>
   <p class="sig">Designed by REAPER-357</p>
 </div></div>
 
@@ -309,12 +321,16 @@ const isHunter=k=>{const kd=ENEMY[k].kind;return kd==='statue'||kd==='caretaker'
 const SCARE=8,TORCH_LIFE=30,PING_EVERY=20;
 const load=(k,d)=>{try{return Object.assign({},d,JSON.parse(localStorage.getItem(k)||'{}'))}catch(e){return d}};
 const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
-let cfg=load('muskox-cfg',{size:'small',theme:'hedge',diff:'peaceful',mood:'fun',dark:10,sens:1,invert:false,map:true,compass:true});
+let cfg=load('muskox-cfg',{size:'small',theme:'hedge',diff:'peaceful',mood:'fun',dark:10,sens:1,invert:false,map:true,compass:true,music:60,sfx:80,calm:'both',ctrl:'kbm'});
 cfg.en=Object.assign({skeleton:true,zombie:false,ghost:false,werewolf:false,special:true},cfg.en||{});
 if(!THEMES[cfg.theme])cfg.theme='hedge';
 if(!['peaceful','dangerous','hardcore'].includes(cfg.diff))cfg.diff='peaceful';
 if(!['fun','horror'].includes(cfg.mood))cfg.mood='fun';
 cfg.dark=Math.max(0,Math.min(100,+cfg.dark||0));
+cfg.music=Math.max(0,Math.min(100,+cfg.music));if(isNaN(cfg.music))cfg.music=60;
+cfg.sfx=Math.max(0,Math.min(100,+cfg.sfx));if(isNaN(cfg.sfx))cfg.sfx=80;
+if(!['rain','dizi','both'].includes(cfg.calm))cfg.calm='both';
+if(!['kb','kbm'].includes(cfg.ctrl))cfg.ctrl='kbm';
 
 const cv=$('view'),ctx=cv.getContext('2d');
 const mmc=$('mm'),mctx=mmc.getContext('2d');
@@ -331,6 +347,7 @@ let zbuf=new Float32Array(1),wtop=new Float32Array(1);
 let enemies=[],items=[],drops=[],puffs=[];
 let pf=new Int32Array(1),cfld=new Int32Array(1),bq=new Int32Array(1),planeLen=1.2;
 const joy={x:0,y:0},keys={};
+let stepD=0,torchT=30,jump=null;
 const isDanger=()=>cfg.diff!=='peaceful';
 
 // ---------- Maze ----------
@@ -575,28 +592,55 @@ function placeFar(e,minD){
 }
 function mkEnemy(k){
   const e={k,def:ENEMY[k],alive:true,state:'patrol',lost:0,has:false,prev:-1,ph:Math.random()*6,pingT:8,hasPing:false,dir:Math.random()*6.28,dirT:0,respawnAt:0,x:0,y:0,tx:0,ty:0};
-  placeFar(e,isHunter(k)?38:28);return e;
+  placeFar(e,isHunter(k)?38:28);
+  if(Math.random()<0.45)relocateNear(e,isHunter(k)?34:20,isHunter(k)?55:48);
+  return e;
 }
 function spawnWorld(){
   enemies=[];items=[];drops=[];puffs=[];inv=0;
   if(!isDanger())return;
   const hc=cfg.diff==='hardcore';
   const types=['skeleton','zombie','ghost','werewolf'].filter(k=>cfg.en[k]);
-  const total=Math.round(N/(hc?9:12));
+  const total=Math.round(N*(hc?0.42:0.28));
   if(types.length)for(let i=0;i<total;i++)enemies.push(mkEnemy(types[i%types.length]));
-  if(cfg.en.special||!types.length){const n=hc&&N>=100?2:1;for(let i=0;i<n;i++)enemies.push(mkEnemy(SPECIAL[cfg.theme]))}
-  const nt=Math.round(N*N/150);
+  if(cfg.en.special||!types.length){const n=hc?(N>=150?3:N>=100?2:1):(N>=150?2:1);for(let i=0;i<n;i++)enemies.push(mkEnemy(SPECIAL[cfg.theme]))}
+  const nt=Math.round(N*N/60);
   for(let i=0;i<nt;i++){
     const cx=1+2*((Math.random()*N)|0),cy=1+2*((Math.random()*N)|0);
     if(Math.hypot(cx-1,cy-1)<3)continue;
     items.push({x:cx+.5,y:cy+.5,taken:false});
   }
-  inv=2;
+  inv=3;torchT=30;
 }
-function resetEnemies(){for(const e of enemies)placeFar(e,isHunter(e.k)?38:28)}
+function resetEnemies(){for(const e of enemies)relocateNear(e,isHunter(e.k)?34:22,isHunter(e.k)?55:46)}
+// put an enemy in a ring around the player, preferably out of sight
+function relocateNear(e,minD,maxD){
+  let best=null,bestScore=-1e9;
+  for(let i=0;i<70;i++){
+    const a0=Math.random()*6.283,rr=minD+Math.random()*(maxD-minD);
+    let cx=Math.round(px+Math.cos(a0)*rr),cy=Math.round(py+Math.sin(a0)*rr);
+    cx=Math.max(1,Math.min(W-2,cx));cy=Math.max(1,Math.min(W-2,cy));
+    if(map[cy*W+cx])continue;
+    const d=Math.hypot(cx+.5-px,cy+.5-py);if(d<minD*0.8)continue;
+    const vis=los(px,py,cx+.5,cy+.5);
+    const score=(vis?-100:0)-Math.abs(d-(minD+maxD)/2);
+    if(score>bestScore){bestScore=score;best=[cx,cy];if(!vis)break}
+  }
+  if(!best){placeFar(e,minD);return}
+  e.x=best[0]+.5;e.y=best[1]+.5;e.has=false;e.prev=-1;e.state='patrol';e.lost=0;e.alive=true;e.hasPing=false;e.relocT=elapsed+3;
+}
+function spawnTorchNear(){
+  if(items.length>900)return;
+  for(let i=0;i<40;i++){
+    const a0=Math.random()*6.283,rr=9+Math.random()*16;
+    const cx=Math.round(px+Math.cos(a0)*rr),cy=Math.round(py+Math.sin(a0)*rr);
+    if(cx<1||cy<1||cx>W-2||cy>W-2||map[cy*W+cx])continue;
+    items.push({x:cx+.5,y:cy+.5,taken:false});return;
+  }
+}
 function banish(e){
   puffs.push({x:e.x,y:e.y,t:elapsed});
-  e.alive=false;e.respawnAt=elapsed+4;e.state='patrol';
+  e.alive=false;e.respawnAt=elapsed+4;e.state='patrol';sfxBanish();
 }
 function walkStep(e,dt,speed,field){
   let move=speed*dt,guard=0;
@@ -627,14 +671,15 @@ function updateEnemies(dt){
   const hc=cfg.diff==='hardcore',sm=hc?1.2:1,hm=hc?1.1:1;
   let nearest=99;
   for(const e of enemies){
-    if(!e.alive){if(elapsed>=e.respawnAt)placeFar(e,30);continue}
+    if(!e.alive){if(elapsed>=e.respawnAt)relocateNear(e,isHunter(e.k)?34:24,isHunter(e.k)?55:44);continue}
     const def=e.def,d=Math.hypot(e.x-px,e.y-py);
+    if(d>(isHunter(e.k)?80:46)&&e.state!=='chase'&&elapsed>(e.relocT||0)){relocateNear(e,isHunter(e.k)?34:20,isHunter(e.k)?55:40);continue}
     if(def.kind==='walk'){
       const sees=d<def.sight*sm&&los(e.x,e.y,px,py);
-      if(sees){e.state='chase';e.lost=0}else if(e.state==='chase'){e.lost+=dt;if(e.lost>5)e.state='patrol'}
+      if(sees){if(e.state!=='chase')alertEnemy(e,d);e.state='chase';e.lost=0}else if(e.state==='chase'){e.lost+=dt;if(e.lost>5)e.state='patrol'}
       walkStep(e,dt,(e.state==='chase'?def.chase:def.speed)*hm,e.state==='chase'?pf:null);
     }else if(def.kind==='ghost'){
-      if(d<def.sight*sm){e.state='chase';const dx=px-e.x,dy=py-e.y,l=Math.hypot(dx,dy)||1,s=def.chase*hm*dt;e.x+=dx/l*s;e.y+=dy/l*s}
+      if(d<def.sight*sm){if(e.state!=='chase')alertEnemy(e,d);e.state='chase';const dx=px-e.x,dy=py-e.y,l=Math.hypot(dx,dy)||1,s=def.chase*hm*dt;e.x+=dx/l*s;e.y+=dy/l*s}
       else{
         e.state='patrol';e.dirT-=dt;if(e.dirT<=0){e.dir=Math.random()*6.283;e.dirT=2+Math.random()*3}
         e.x+=Math.cos(e.dir)*def.speed*dt;e.y+=Math.sin(e.dir)*def.speed*dt;
@@ -646,12 +691,12 @@ function updateEnemies(dt){
       e.pingT-=dt;
       if(e.pingT<=0){
         e.pingT=PING_EVERY;bfs(cfld,px|0,py|0);e.hasPing=true;
-        toast('A cold dread washes over you. It knows where you are.');
+        toast('A cold dread washes over you. It knows where you are.');sfxPing();
         $('flash').className='ping pulse';setTimeout(()=>{$('flash').className='ping'},120);
         try{navigator.vibrate&&navigator.vibrate(200)}catch(_){}
       }
       const sees=d<def.sight*sm&&los(e.x,e.y,px,py);
-      if(sees){e.state='chase';e.lost=0;walkStep(e,dt,def.chase*hm,pf)}
+      if(sees){if(e.state!=='chase')alertEnemy(e,d);e.state='chase';e.lost=0;walkStep(e,dt,def.chase*hm,pf)}
       else{
         if(e.state==='chase'){e.lost+=dt;if(e.lost>5)e.state='patrol'}
         if(e.state==='chase')walkStep(e,dt,def.chase*hm,pf);
@@ -659,9 +704,10 @@ function updateEnemies(dt){
       }
     }
     if(e.state==='chase'&&d<nearest)nearest=d;
-    if(d<0.55){die();return}
+    if(d<0.55){die(e);return}
   }
   $('danger').style.opacity=Math.max(0,Math.min(1,1-nearest/9)).toFixed(2);
+  AU.tension+=(Math.max(0,Math.min(1,1-nearest/12))-AU.tension)*Math.min(1,dt*3);
 }
 function updateTorches(){
   for(const t of drops){
@@ -676,7 +722,7 @@ function dropTorch(){
   inv--;
   let x=px+Math.cos(ang)*0.7,y=py+Math.sin(ang)*0.7;if(solid(x,y)){x=px;y=py}
   drops.push({x,y,until:elapsed+TORCH_LIFE});
-  toast('Torch lit. Enemies near it will flee.');
+  sfxTorch();toast('Torch lit. Enemies near it will flee.');
   updateTorches();
 }
 
@@ -921,8 +967,10 @@ function update(dt){
   const vx=(fx*my+rx*mx)*sp,vy=(fy*my+ry*mx)*sp,r=0.22;
   if(!hitBox(px+vx,py,r))px+=vx;
   if(!hitBox(px,py+vy,r))py+=vy;
+  const moved=Math.hypot(vx,vy);
+  if(moved>0.0005){stepD+=moved;if(stepD>1.15){stepD=0;sfxStep()}}
   const ls=1.8*dt;
-  if(keys.ArrowLeft)ang-=ls;if(keys.ArrowRight)ang+=ls;
+  if(keys.ArrowLeft||keys.KeyQ)ang-=ls;if(keys.ArrowRight||keys.KeyE)ang+=ls;
   if(keys.ArrowUp)pitch=Math.min(.4,pitch+ls*.5);if(keys.ArrowDown)pitch=Math.max(-.4,pitch-ls*.5);
   const tile=(py|0)*W+(px|0);
   if(tile!==lastTile){
@@ -931,8 +979,15 @@ function update(dt){
     if(enemies.length)bfs(pf,cx,cy);
   }
   elapsed+=dt;
+  if(!isDanger())AU.tension=0;
   if(isDanger()){
-    for(const it of items)if(!it.taken&&Math.abs(it.x-px)<0.6&&Math.abs(it.y-py)<0.6){it.taken=true;inv++;toast('Torch collected ('+inv+')')}
+    torchT-=dt;
+    if(torchT<=0){
+      torchT=cfg.diff==='hardcore'?50:35;
+      let near=0;for(const it of items)if(!it.taken&&Math.hypot(it.x-px,it.y-py)<28)near++;
+      if(near<4)spawnTorchNear();
+    }
+    for(const it of items)if(!it.taken&&Math.abs(it.x-px)<0.6&&Math.abs(it.y-py)<0.6){it.taken=true;inv++;sfxPickup();toast('Torch collected ('+inv+')')}
     updateTorches();
     updateEnemies(dt);
     if(overlay)return;
@@ -978,7 +1033,9 @@ function setOverlay(name){
   overlay=name;
   for(const k in OVS)$(OVS[k]).classList.toggle('show',k===name);
   joy.x=joy.y=0;stick.style.display='none';moveId=null;lookId=null;
-  if(!name)last=performance.now();
+  if(name&&document.pointerLockElement){try{document.exitPointerLock()}catch(e){}}
+  if(!name){last=performance.now();if(playing&&DESKTOP&&cfg.ctrl==='kbm'&&!document.pointerLockElement)toast('Click the game to capture the mouse. Left click drops a torch.')}
+  AU.duck=!name?1:(name==='dead'||name==='jump')?0.15:0.5;applyVolumes();
   if(name==='menu'||name==='setup'||name==='settings'||name==='pause')refreshUI();
 }
 function lifeDeaths(){try{return parseInt(localStorage.getItem('muskox-deaths'))||0}catch(e){return 0}}
@@ -1001,6 +1058,7 @@ function refreshUI(){
   for(const id of['dark','dark2'])$(id).value=cfg.dark;
   $('darkV').textContent=cfg.dark+'%';$('darkNote').textContent=darkNote();
   $('invert').checked=cfg.invert;$('invert2').checked=cfg.invert;$('optMap').checked=cfg.map;$('optComp').checked=cfg.compass;
+  $('musVol').value=cfg.music;$('musV').textContent=cfg.music+'%';$('sfxVol').value=cfg.sfx;$('sfxV').textContent=cfg.sfx+'%';
   const b=getBest();$('best').textContent=b?('Best: '+fmt(b)):'No time yet';
   $('diffNote').textContent=DIFF_NOTE[cfg.diff];
   $('lifeDeaths').textContent=lifeDeaths()?('Lifetime deaths: '+lifeDeaths()):'';
@@ -1010,7 +1068,7 @@ function refreshUI(){
     btn.innerHTML=k==='special'?`${SPECIAL_LABEL[cfg.theme]}<br><small>${SPECIAL_DESC[cfg.theme]}</small>`:ENEMY[k].label;
     btn.classList.toggle('on',!!cfg.en[k]);row.appendChild(btn);
   }
-  applyHud();applyLook();
+  applyHud();applyLook();syncMusic();
 }
 function applyHud(){
   $('mm').style.display=cfg.map?'block':'none';$('compass').style.display=cfg.compass?'flex':'none';
@@ -1030,16 +1088,23 @@ function doStart(){
   elapsed=0;deaths=0;playing=true;
   spawnWorld();applyHud();applyLook();setOverlay(null);
   $('danger').style.opacity=0;
-  if(isDanger())toast(cfg.diff==='hardcore'?'Hardcore: one life.':'Find the light. Torches scare enemies away.');
+  if(isDanger())setTimeout(()=>{if(playing&&!overlay)toast(cfg.diff==='hardcore'?'Hardcore: one life.':'Find the light. Torches scare enemies away.')},3200);
 }
 function toMainMenu(){playing=false;enemies=[];$('danger').style.opacity=0;setOverlay('menu')}
 function openSettings(from){settingsReturn=from;setOverlay('settings')}
-function die(){
+function die(e){
   if(!playing||overlay)return;
   deaths++;addLifeDeath();
-  $('flash').className='pulse';setTimeout(()=>{$('flash').className=''},80);
-  try{navigator.vibrate&&navigator.vibrate([200,80,300])}catch(_){}
+  jump={k:e?e.k:'skeleton',t0:performance.now()};
+  setOverlay('jump');
+  sfxDeath(jump.k);
+  $('flash').className='pulse';setTimeout(()=>{$('flash').className=''},350);
+  try{navigator.vibrate&&navigator.vibrate([300,60,500])}catch(_){}
   $('danger').style.opacity=0;
+  setTimeout(showDead,1000);
+}
+function showDead(){
+  jump=null;
   if(cfg.diff==='hardcore'){
     playing=false;$('dTitle').textContent='Run over';$('dSub').textContent='Hardcore: you only get one life. Time survived: '+fmt(elapsed);
     $('bRespawn').style.display='none';
@@ -1054,7 +1119,7 @@ function respawn(){
   $('danger').style.opacity=0;setOverlay(null);
 }
 function win(){
-  playing=false;
+  playing=false;sfxWin();
   const b=getBest();let msg;
   if(!b||elapsed<b){try{localStorage.setItem(bestKey(),String(elapsed))}catch(e){}msg=b?'New best time!':'First clear on this setup!'}
   else msg='Best: '+fmt(b);
@@ -1081,6 +1146,9 @@ const setDark=v=>{cfg.dark=parseInt(v);save('muskox-cfg',cfg);$('dark').value=v;
 $('sens').addEventListener('input',e=>setSens(e.target.value));$('sens2').addEventListener('input',e=>setSens(e.target.value));
 $('dark').addEventListener('input',e=>setDark(e.target.value));$('dark2').addEventListener('input',e=>setDark(e.target.value));
 $('invert').addEventListener('change',e=>setInv(e.target.checked));$('invert2').addEventListener('change',e=>setInv(e.target.checked));
+$('musVol').addEventListener('input',e=>{cfg.music=parseInt(e.target.value);$('musV').textContent=cfg.music+'%';save('muskox-cfg',cfg);applyVolumes()});
+$('sfxVol').addEventListener('input',e=>{cfg.sfx=parseInt(e.target.value);$('sfxV').textContent=cfg.sfx+'%';save('muskox-cfg',cfg);applyVolumes()});
+$('sfxVol').addEventListener('change',()=>sfxPickup());
 $('optMap').addEventListener('change',e=>{cfg.map=e.target.checked;save('muskox-cfg',cfg);applyHud()});
 $('optComp').addEventListener('change',e=>{cfg.compass=e.target.checked;save('muskox-cfg',cfg);applyHud()});
 document.querySelectorAll('#themeSeg button').forEach(b=>b.addEventListener('click',()=>setAppTheme(b.dataset.th)));
@@ -1112,8 +1180,14 @@ const touch=$('touch'),stick=$('stick'),knob=$('knob');
 let moveId=null,lookId=null,ox=0,oy=0,lx=0,ly=0;const SR=55;
 touch.addEventListener('pointerdown',e=>{
   if(!playing||overlay)return;
+  if(e.pointerType==='mouse'){
+    if(cfg.ctrl!=='kbm')return;
+    if(document.pointerLockElement!==touch){try{touch.requestPointerLock()}catch(_){}return}
+    if(e.button===0)dropTorch();
+    return;
+  }
   try{touch.setPointerCapture(e.pointerId)}catch(_){}
-  const left=e.pointerType==='mouse'?false:e.clientX<innerWidth/2;
+  const left=e.clientX<innerWidth/2;
   if(left&&moveId===null){moveId=e.pointerId;ox=e.clientX;oy=e.clientY;stick.style.display='block';stick.style.left=ox+'px';stick.style.top=oy+'px';knob.style.transform='translate(0,0)'}
   else if(!left&&lookId===null){lookId=e.pointerId;lx=e.clientX;ly=e.clientY}
 });
@@ -1137,6 +1211,13 @@ const endPtr=e=>{
 };
 touch.addEventListener('pointerup',endPtr);touch.addEventListener('pointercancel',endPtr);
 touch.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('mousemove',e=>{
+  if(document.pointerLockElement!==touch||!playing||overlay)return;
+  ang+=e.movementX*0.0022*cfg.sens;
+  pitch-=e.movementY*0.0018*cfg.sens*(cfg.invert?-1:1);
+  pitch=Math.max(-.4,Math.min(.4,pitch));
+});
+document.addEventListener('pointerlockchange',()=>{if(!document.pointerLockElement&&playing&&!overlay&&cfg.ctrl==='kbm')setOverlay('pause')});
 
 addEventListener('keydown',e=>{
   if(e.code==='Escape'){
@@ -1150,14 +1231,299 @@ addEventListener('keydown',e=>{
   keys[e.code]=true;
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
-document.addEventListener('visibilitychange',()=>{if(document.hidden&&playing&&!overlay)setOverlay('pause')});
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){if(playing&&!overlay)setOverlay('pause');try{AU.ctx&&AU.ctx.suspend()}catch(e){}}
+  else{try{AU.ctx&&AU.ctx.resume()}catch(e){}}
+});
+
+// ---------- Audio (everything is synthesized in code, no sound files) ----------
+const AU={ctx:null,master:null,mus:null,sfx:null,revIn:null,noiseW:null,noiseB:null,mode:null,layer:null,duck:1,tension:0,heartT:0,tenT:0};
+const DESKTOP=(()=>{try{return matchMedia('(any-pointer:fine)').matches&&!matchMedia('(any-pointer:coarse)').matches}catch(e){return false}})();
+function audioInit(){
+  if(AU.ctx){if(AU.ctx.state==='suspended')AU.ctx.resume();return}
+  const C=window.AudioContext||window.webkitAudioContext;if(!C)return;
+  const c=AU.ctx=new C();
+  const comp=c.createDynamicsCompressor();comp.threshold.value=-16;comp.ratio.value=6;comp.connect(c.destination);
+  AU.master=c.createGain();AU.master.gain.value=.9;AU.master.connect(comp);
+  AU.mus=c.createGain();AU.mus.connect(AU.master);
+  AU.sfx=c.createGain();AU.sfx.connect(AU.master);
+  const mkN=type=>{const len=c.sampleRate*3,b=c.createBuffer(1,len,c.sampleRate),d=b.getChannelData(0);let l=0;
+    for(let i=0;i<len;i++){const w=Math.random()*2-1;if(type==='brown'){l=(l+0.02*w)/1.02;d[i]=l*3.5}else d[i]=w}return b};
+  AU.noiseW=mkN('white');AU.noiseB=mkN('brown');
+  const rl=Math.floor(c.sampleRate*2.6),ib=c.createBuffer(2,rl,c.sampleRate);
+  for(let ch=0;ch<2;ch++){const d=ib.getChannelData(ch);for(let i=0;i<rl;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/rl,2.4)}
+  const conv=c.createConvolver();conv.buffer=ib;AU.revIn=c.createGain();AU.revIn.connect(conv);
+  const rg=c.createGain();rg.gain.value=.6;conv.connect(rg);rg.connect(AU.master);
+  applyVolumes();
+}
+function applyVolumes(){
+  if(!AU.ctx)return;const t=AU.ctx.currentTime;
+  AU.mus.gain.setTargetAtTime(cfg.music/100*0.9*AU.duck,t,.15);
+  AU.sfx.gain.setTargetAtTime(cfg.sfx/100,t,.05);
+}
+function syncMusic(){
+  if(!AU.ctx)return;
+  setMusic(cfg.mood==='horror'?'horror':cfg.calm);applyVolumes();
+}
+function setMusic(mode){
+  if(AU.mode===mode)return;
+  const old=AU.layer;AU.mode=mode;if(old)old.stop();
+  AU.layer=mode?buildLayer(mode):null;
+}
+function buildLayer(mode){
+  const c=AU.ctx,out=c.createGain();out.gain.value=0;out.connect(AU.mus);out.gain.setTargetAtTime(1,c.currentTime,.8);
+  const nodes=[],timers=[];let dead=false;
+  const L={out,stop(){dead=true;out.gain.setTargetAtTime(0,c.currentTime,.5);timers.forEach(clearTimeout);
+    setTimeout(()=>{nodes.forEach(n=>{try{n.stop()}catch(e){}});try{out.disconnect()}catch(e){}},2800)}};
+  const later=(fn,ms)=>{timers.push(setTimeout(()=>{if(!dead)fn()},ms))};
+  if(mode==='horror')horrorLayer(L,out,nodes,later);
+  else{if(mode==='rain'||mode==='both')rainLayer(out,nodes,later);if(mode==='dizi'||mode==='both')diziLayer(out,nodes,later)}
+  return L;
+}
+function horrorLayer(L,out,nodes,later){
+  const c=AU.ctx;
+  const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=260;lp.Q.value=2;lp.connect(out);
+  const osc=(type,f,g,dest)=>{const o=c.createOscillator();o.type=type;o.frequency.value=f;const gg=c.createGain();gg.gain.value=g;o.connect(gg);gg.connect(dest);o.start();nodes.push(o)};
+  osc('sawtooth',55,.05,lp);osc('sawtooth',55.7,.05,lp);osc('sine',58.27,.08,lp);osc('sine',77.8,.045,lp);osc('sine',27.5,.12,out);
+  const lfo=c.createOscillator();lfo.frequency.value=.06;const lg=c.createGain();lg.gain.value=120;lfo.connect(lg);lg.connect(lp.frequency);lfo.start();nodes.push(lfo);
+  const wn=c.createBufferSource();wn.buffer=AU.noiseB;wn.loop=true;
+  const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=380;bp.Q.value=.7;
+  const wg=c.createGain();wg.gain.value=.12;
+  const wl=c.createOscillator();wl.frequency.value=.11;const wlg=c.createGain();wlg.gain.value=.09;wl.connect(wlg);wlg.connect(wg.gain);wl.start();nodes.push(wl);
+  wn.connect(bp);bp.connect(wg);wg.connect(out);wn.start(0,Math.random()*2);nodes.push(wn);
+  const send=(n,v)=>{const g=c.createGain();g.gain.value=v;n.connect(g);g.connect(AU.revIn)};
+  const panN=()=>{if(c.createStereoPanner){const p=c.createStereoPanner();p.pan.value=Math.random()*2-1;p.connect(out);return p}return out};
+  const ev=[
+    ()=>{const t=c.currentTime,o=c.createOscillator(),f=c.createBiquadFilter(),g=c.createGain();
+      o.type='sawtooth';o.frequency.setValueAtTime(190,t);o.frequency.exponentialRampToValueAtTime(85,t+1.6);
+      f.type='bandpass';f.frequency.value=420;f.Q.value=9;
+      g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.06,t+.3);g.gain.exponentialRampToValueAtTime(.0001,t+1.7);
+      o.connect(f);f.connect(g);g.connect(panN());send(g,.5);o.start(t);o.stop(t+1.8)},
+    ()=>{const t=c.currentTime,s=c.createBufferSource();s.buffer=AU.noiseW;s.loop=true;
+      const f=c.createBiquadFilter();f.type='bandpass';f.Q.value=7;f.frequency.setValueAtTime(900,t);f.frequency.linearRampToValueAtTime(1700,t+.9);f.frequency.linearRampToValueAtTime(1100,t+1.8);
+      const g=c.createGain();g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.07,t+.7);g.gain.exponentialRampToValueAtTime(.0001,t+1.9);
+      s.connect(f);f.connect(g);g.connect(panN());send(g,.8);s.start(t,Math.random()*2);s.stop(t+2)},
+    ()=>{const t=c.currentTime,f0=260+Math.random()*220,d=panN();
+      for(const m of[1,2.76,5.4,8.93]){const o=c.createOscillator(),g=c.createGain();o.frequency.value=f0*m;
+        g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.035/Math.sqrt(m),t+.01);g.gain.exponentialRampToValueAtTime(.0001,t+3.2);
+        o.connect(g);g.connect(d);send(g,.7);o.start(t);o.stop(t+3.3)}},
+    ()=>{const t=c.currentTime,o=c.createOscillator(),g=c.createGain();
+      o.frequency.setValueAtTime(55,t);o.frequency.exponentialRampToValueAtTime(28,t+1.8);
+      g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.3,t+.05);g.gain.exponentialRampToValueAtTime(.0001,t+2);
+      o.connect(g);g.connect(out);o.start(t);o.stop(t+2.1)}
+  ];
+  const loop=()=>{ev[(Math.random()*ev.length)|0]();later(loop,5000+Math.random()*9000)};
+  later(loop,3000);
+  L.onTension=tn=>{lp.frequency.setTargetAtTime(260+520*tn,c.currentTime,.5)};
+}
+function rainLayer(out,nodes,later){
+  const c=AU.ctx;
+  const mk=(hpF,lpF,gain)=>{const s=c.createBufferSource();s.buffer=AU.noiseW;s.loop=true;
+    const hp=c.createBiquadFilter();hp.type='highpass';hp.frequency.value=hpF;
+    const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.value=lpF;
+    const g=c.createGain();g.gain.value=gain;s.connect(hp);hp.connect(lp);lp.connect(g);g.connect(out);s.start(0,Math.random()*2);nodes.push(s);return g};
+  mk(700,7000,.14);const g2=mk(2500,9000,.05);
+  const l=c.createOscillator(),lg=c.createGain();l.frequency.value=.13;lg.gain.value=.025;l.connect(lg);lg.connect(g2.gain);l.start();nodes.push(l);
+  const drop=()=>{const t=c.currentTime,o=c.createOscillator(),g=c.createGain(),f=2000+Math.random()*3500;
+    o.frequency.setValueAtTime(f,t);o.frequency.exponentialRampToValueAtTime(f*.6,t+.04);
+    g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.012+Math.random()*.02,t+.004);g.gain.exponentialRampToValueAtTime(.0001,t+.05);
+    o.connect(g);g.connect(out);o.start(t);o.stop(t+.06);later(drop,60+Math.random()*220)};
+  later(drop,200);
+  const thunder=()=>{const t=c.currentTime,s=c.createBufferSource();s.buffer=AU.noiseB;s.loop=true;
+    const f=c.createBiquadFilter();f.type='lowpass';f.frequency.setValueAtTime(220,t);f.frequency.exponentialRampToValueAtTime(70,t+5);
+    const g=c.createGain();g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.7,t+1.4);g.gain.exponentialRampToValueAtTime(.0001,t+6.5);
+    s.connect(f);f.connect(g);g.connect(out);s.start(t,Math.random()*2);s.stop(t+6.6);later(thunder,24000+Math.random()*30000)};
+  later(thunder,12000+Math.random()*12000);
+}
+function diziLayer(out,nodes,later){
+  const c=AU.ctx;
+  const bus=c.createGain();bus.gain.value=.55;bus.connect(out);
+  const send=c.createGain();send.gain.value=.75;bus.connect(send);send.connect(AU.revIn);
+  const scale=[293.66,329.63,369.99,440,493.88,587.33,659.25,739.99,880,987.77];
+  let idx=4;
+  for(const[f,g]of[[146.83,.035],[220,.025],[293.66,.012]]){
+    const o=c.createOscillator();o.type='sine';o.frequency.value=f;const gg=c.createGain();gg.gain.value=g;
+    const l=c.createOscillator();l.frequency.value=.05+Math.random()*.05;const lg=c.createGain();lg.gain.value=g*.6;
+    l.connect(lg);lg.connect(gg.gain);o.connect(gg);gg.connect(out);o.start();l.start();nodes.push(o,l);
+  }
+  const note=(f,t0,dur,vel)=>{
+    const o=c.createOscillator();o.type='sine';o.frequency.setValueAtTime(f*0.985,t0);o.frequency.linearRampToValueAtTime(f,t0+.09);
+    const l=c.createOscillator(),lg=c.createGain();l.frequency.value=5.1;lg.gain.setValueAtTime(0,t0);lg.gain.linearRampToValueAtTime(f*.007,t0+dur*.5);l.connect(lg);lg.connect(o.frequency);
+    const o2=c.createOscillator();o2.type='sine';o2.frequency.value=f*2;const g2=c.createGain();g2.gain.value=.1;
+    const g=c.createGain();g.gain.setValueAtTime(.0001,t0);g.gain.exponentialRampToValueAtTime(.16*vel,t0+.1);g.gain.setTargetAtTime(.1*vel,t0+.15,.4);g.gain.setTargetAtTime(.0001,t0+dur,.15);
+    o.connect(g);o2.connect(g2);g2.connect(g);g.connect(bus);
+    const ns=c.createBufferSource();ns.buffer=AU.noiseW;ns.loop=true;
+    const bp=c.createBiquadFilter();bp.type='bandpass';bp.frequency.value=f*2;bp.Q.value=4;
+    const ng=c.createGain();ng.gain.setValueAtTime(.0001,t0);ng.gain.exponentialRampToValueAtTime(.05*vel,t0+.06);ng.gain.setTargetAtTime(.012*vel,t0+.12,.2);ng.gain.setTargetAtTime(.0001,t0+dur,.1);
+    ns.connect(bp);bp.connect(ng);ng.connect(bus);
+    const st=t0+dur+1.2;o.start(t0);o2.start(t0);l.start(t0);ns.start(t0,Math.random()*2);o.stop(st);o2.stop(st);l.stop(st);ns.stop(st);
+  };
+  const pluck=f=>{const t0=c.currentTime+.02,o=c.createOscillator();o.type='triangle';o.frequency.value=f;
+    const g=c.createGain();g.gain.setValueAtTime(.0001,t0);g.gain.exponentialRampToValueAtTime(.12,t0+.01);g.gain.exponentialRampToValueAtTime(.0001,t0+2.2);
+    const lp=c.createBiquadFilter();lp.type='lowpass';lp.frequency.setValueAtTime(2800,t0);lp.frequency.exponentialRampToValueAtTime(500,t0+1.5);
+    o.connect(lp);lp.connect(g);g.connect(bus);o.start(t0);o.stop(t0+2.4)};
+  const clampI=i=>Math.max(0,Math.min(scale.length-1,i));
+  const loop=()=>{
+    if(Math.random()<.22){later(loop,1200+Math.random()*1800);return}
+    idx=clampI(idx+[-2,-1,-1,0,1,1,2][(Math.random()*7)|0]);
+    const dur=[.9,1.3,1.8,2.6][(Math.random()*4)|0];
+    note(scale[idx],c.currentTime+.05,dur,.5+Math.random()*.3);
+    if(Math.random()<.3)note(scale[clampI(idx+(Math.random()<.5?1:-1))],c.currentTime+.05+dur,dur*.8,.5);
+    later(loop,(dur+.15+Math.random()*.5)*1000);
+  };
+  later(loop,1500);
+  const pl=()=>{pluck(scale[(Math.random()*5)|0]/2);later(pl,4000+Math.random()*6000)};
+  later(pl,4000);
+}
+// --- sfx helpers
+function bus(wet,pan){
+  const c=AU.ctx,g=c.createGain();let dest=AU.sfx;
+  if(pan!=null&&c.createStereoPanner){const p=c.createStereoPanner();p.pan.value=Math.max(-1,Math.min(1,pan));p.connect(AU.sfx);dest=p}
+  g.connect(dest);
+  if(wet){const w=c.createGain();w.gain.value=wet;g.connect(w);w.connect(AU.revIn)}
+  return g;
+}
+function env(g,t,a,peak,d){g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(Math.max(0.0002,peak),t+a);g.gain.exponentialRampToValueAtTime(0.0001,t+a+Math.max(.02,d))}
+function distCurve(k){const n=256,cu=new Float32Array(n),deg=Math.PI/180;for(let i=0;i<n;i++){const x=i*2/n-1;cu[i]=(3+k)*x*20*deg/(Math.PI+k*Math.abs(x))}return cu}
+// pts: [[time,freq],...] exponential glide. opt: a (attack), vib [hz,depth], lp, dist
+function tone(type,pts,t0,vol,dest,opt){
+  const c=AU.ctx,o=c.createOscillator(),g=c.createGain(),a=(opt&&opt.a)||.02;
+  o.type=type;o.frequency.setValueAtTime(pts[0][1],t0);
+  for(let i=1;i<pts.length;i++)o.frequency.exponentialRampToValueAtTime(pts[i][1],t0+pts[i][0]);
+  const dur=pts[pts.length-1][0];
+  if(opt&&opt.vib){const l=c.createOscillator(),lg=c.createGain();l.frequency.value=opt.vib[0];lg.gain.value=opt.vib[1];l.connect(lg);lg.connect(o.frequency);l.start(t0);l.stop(t0+dur+.1)}
+  let node=o;
+  if(opt&&opt.lp){const f=c.createBiquadFilter();f.type='lowpass';f.frequency.value=opt.lp;node.connect(f);node=f}
+  if(opt&&opt.dist){const ws=c.createWaveShaper();ws.curve=distCurve(opt.dist);node.connect(ws);node=ws}
+  node.connect(g);g.connect(dest);env(g,t0,a,vol,dur-a);o.start(t0);o.stop(t0+dur+.1);
+}
+function noiseBurst(t0,dur,vol,dest,o){
+  o=o||{};const c=AU.ctx,s=c.createBufferSource();s.buffer=AU.noiseW;s.loop=true;
+  const fl=c.createBiquadFilter();fl.type=o.type||'bandpass';fl.frequency.setValueAtTime(o.f||1000,t0);
+  if(o.f2)fl.frequency.exponentialRampToValueAtTime(o.f2,t0+dur);fl.Q.value=o.Q||1;
+  const g=c.createGain();env(g,t0,Math.min(.02,dur/4),vol,dur);
+  s.connect(fl);fl.connect(g);g.connect(dest);s.start(t0,Math.random()*2);s.stop(t0+dur+.1);
+}
+function thump(v){
+  const c=AU.ctx,t=c.currentTime;
+  for(const[o,k]of[[0,1],[.17,.65]]){
+    const os=c.createOscillator(),g=c.createGain();
+    os.frequency.setValueAtTime(75,t+o);os.frequency.exponentialRampToValueAtTime(38,t+o+.13);
+    g.gain.setValueAtTime(.0001,t+o);g.gain.exponentialRampToValueAtTime(.7*v*k,t+o+.015);g.gain.exponentialRampToValueAtTime(.0001,t+o+.2);
+    os.connect(g);g.connect(AU.sfx);os.start(t+o);os.stop(t+o+.25);
+  }
+}
+function audioTick(dt){
+  if(!AU.ctx)return;
+  if(playing&&!overlay&&isDanger()){
+    if(AU.tension>0.08){AU.heartT-=dt;if(AU.heartT<=0){thump(AU.tension);AU.heartT=1.15-0.75*AU.tension}}
+    AU.tenT-=dt;if(AU.tenT<=0){AU.tenT=.3;if(AU.layer&&AU.layer.onTension)AU.layer.onTension(AU.tension)}
+  }
+}
+// --- one-shot effects
+function sfxStep(){
+  if(!AU.ctx)return;const c=AU.ctx,t=c.currentTime+.005,d=bus(.08),th=cfg.theme,j=.85+Math.random()*.3;
+  noiseBurst(t,.07,.09,d,{type:'lowpass',f:(th==='cave'?2200:th==='forest'?1500:800)*j,Q:.7});
+  if(th==='forest')noiseBurst(t+.02,.05,.05,d,{type:'highpass',f:3000,Q:.5});
+  if(th==='cave')tone('sine',[[0,300*j],[.06,150]],t,.04,d,{a:.003});else tone('sine',[[0,120*j],[.07,60]],t,.07,d,{a:.004});
+}
+function sfxPickup(){
+  if(!AU.ctx)return;const t=AU.ctx.currentTime+.01,d=bus(.3);
+  tone('sine',[[0,660],[.12,990]],t,.18,d,{a:.005});tone('sine',[[0,880],[.18,1320]],t+.08,.14,d,{a:.005});
+}
+function sfxTorch(){
+  if(!AU.ctx)return;const t=AU.ctx.currentTime+.01,d=bus(.2);
+  noiseBurst(t,.5,.3,d,{f:300,f2:1400,Q:1.2});
+  for(let i=0;i<6;i++)noiseBurst(t+.1+i*.07,.03,.15,d,{type:'highpass',f:2500,Q:.5});
+  tone('sine',[[0,200],[.5,420]],t,.06,d,{a:.1});
+}
+function sfxBanish(){
+  if(!AU.ctx)return;const t=AU.ctx.currentTime+.01,d=bus(.5);
+  noiseBurst(t,.7,.35,d,{f:2400,f2:220,Q:1.5});tone('sine',[[0,700],[.7,90]],t,.2,d,{a:.01});
+}
+function sfxPing(){
+  if(!AU.ctx)return;const t=AU.ctx.currentTime+.01,d=bus(.8);
+  tone('sine',[[0,48],[1.6,30]],t,.7,d,{a:.02});noiseBurst(t,1.6,.12,d,{f:700,f2:1500,Q:5});tone('sawtooth',[[0,220],[1.4,200]],t,.05,d,{lp:600});
+}
+function sfxWin(){
+  if(!AU.ctx)return;const t=AU.ctx.currentTime+.02,d=bus(.5);
+  [523.25,659.25,783.99,1046.5,1318.5].forEach((f,i)=>tone('sine',[[0,f],[1.4,f*.995]],t+i*.14,.16,d,{a:.01}));
+}
+function alertEnemy(e,d){
+  if(elapsed<(e.alertT||0))return;e.alertT=elapsed+6;
+  let a=Math.atan2(e.y-py,e.x-px)-ang;a=Math.atan2(Math.sin(a),Math.cos(a));
+  sfxAlert(e.k,Math.max(.25,1-d/22),Math.sin(a));
+}
+function sfxAlert(kind,v,pan){
+  if(!AU.ctx)return;const t=AU.ctx.currentTime+.01,d=bus(.25,pan);d.gain.value=v;
+  switch(kind){
+    case'skeleton':for(let i=0;i<7;i++)noiseBurst(t+i*.05,.03,.22,d,{f:3200,Q:4});tone('sawtooth',[[0,800],[.25,1700],[.5,1100]],t,.08,d,{vib:[10,50],lp:3000});break;
+    case'zombie':tone('sawtooth',[[0,90],[.7,60]],t,.22,d,{lp:420,dist:25,vib:[24,18]});tone('sine',[[0,200],[.8,140]],t,.08,d,{a:.1});break;
+    case'ghost':tone('sine',[[0,600],[.6,1100],[1.1,500]],t,.1,d,{vib:[6,40],a:.1});break;
+    case'werewolf':tone('sawtooth',[[0,120],[.4,80],[.9,60]],t,.3,d,{lp:600,dist:30,vib:[28,20]});noiseBurst(t,.3,.1,d,{type:'lowpass',f:700});break;
+    case'minotaur':tone('sawtooth',[[0,70],[.3,120],[1,55]],t,.4,d,{dist:50,lp:600,vib:[16,20]});noiseBurst(t,.5,.15,d,{type:'lowpass',f:500});break;
+    case'statue':noiseBurst(t,.9,.3,d,{f:240,f2:100,Q:3});break;
+    default:tone('sawtooth',[[0,200],[.5,520],[1,160]],t,.15,d,{dist:50,lp:2500,vib:[10,30]});noiseBurst(t,.9,.08,d,{f:2200,Q:2});
+  }
+}
+// the kill scream: loud stinger + a creature-specific scream / growl / howl
+function sfxDeath(kind){
+  if(!AU.ctx)return;const c=AU.ctx,t=c.currentTime+.01,d=bus(.5);
+  noiseBurst(t,.5,.55,d,{type:'highpass',f:1500,Q:.5});
+  for(const f of[233,247,311,466])tone('sawtooth',[[0,f],[.9,f*.97]],t,.16,d,{a:.005,lp:2500});
+  tone('sine',[[0,70],[1.2,28]],t,.6,d,{a:.005});
+  switch(kind){
+    case'skeleton':
+      for(let i=0;i<14;i++)noiseBurst(t+i*.045,.03,.25,d,{f:3500,Q:4});
+      tone('sawtooth',[[0,900],[.35,2100],[.9,1300]],t+.05,.2,d,{vib:[9,60],lp:3500,dist:8});break;
+    case'zombie':
+      tone('sawtooth',[[0,95],[.5,70],[1.4,48]],t,.4,d,{lp:420,dist:30,vib:[26,22]});
+      tone('sine',[[0,220],[.7,160],[1.4,110]],t+.1,.18,d,{vib:[5,8],a:.1});
+      noiseBurst(t,1.2,.15,d,{type:'lowpass',f:600});break;
+    case'ghost':
+      tone('sine',[[0,700],[.5,1500],[1.4,520]],t,.28,d,{vib:[7,50],a:.05});
+      tone('sine',[[0,705],[.5,1530],[1.4,515]],t,.2,d,{vib:[7,50],a:.05});
+      noiseBurst(t,1.3,.12,d,{f:1800,Q:2});break;
+    case'werewolf':
+      tone('triangle',[[0,260],[.55,720],[1.9,540],[2.6,330]],t,.35,d,{vib:[6,16],lp:2200,a:.06});
+      tone('sawtooth',[[0,130],[.55,360],[1.9,270],[2.6,165]],t,.12,d,{vib:[6,10],lp:1200,a:.06});
+      tone('sawtooth',[[0,110],[1,70],[1.6,55]],t,.3,d,{lp:500,dist:25,vib:[30,18]});break;
+    case'minotaur':
+      tone('sawtooth',[[0,85],[.4,150],[1.6,60]],t,.5,d,{dist:60,lp:700,vib:[18,25]});
+      tone('sawtooth',[[0,170],[.4,300],[1.6,120]],t,.25,d,{dist:40,lp:1400,vib:[18,40]});
+      noiseBurst(t,1.4,.3,d,{type:'lowpass',f:900});break;
+    case'statue':
+      noiseBurst(t,1.5,.45,d,{f:200,f2:90,Q:3});
+      tone('sawtooth',[[0,1100],[.5,2000],[1.2,900]],t,.18,d,{vib:[8,80],lp:4000,dist:15});break;
+    default:
+      tone('sawtooth',[[0,150],[.6,420],[1.6,110]],t,.35,d,{dist:70,lp:2200,vib:[12,40]});
+      tone('sine',[[0,1700],[.6,2600],[1.5,800]],t,.18,d,{vib:[9,90]});
+      tone('square',[[0,310],[1.4,205]],t,.1,d,{lp:1500});
+      noiseBurst(t,1.4,.15,d,{f:2000,f2:900,Q:3});
+  }
+}
+// jump scare: the killer lunges at the camera with screen shake
+function drawJump(now){
+  const el=(now-jump.t0)/1000,w=cv.width,h=cv.height;
+  const k=Math.min(1,el/0.14),sc=0.55+0.5*(1-Math.pow(1-k,3));
+  const hp=h*1.05*sc,wp=hp*0.667,sh=el<0.7?(1-el/0.7)*h*0.03:0;
+  const x=w/2+(Math.random()-.5)*2*sh,y=h*0.98-hp+(Math.random()-.5)*2*sh;
+  ctx.fillStyle='rgba(60,0,0,.55)';ctx.fillRect(0,0,w,h);
+  ctx.globalAlpha=1;ctx.drawImage(SP[jump.k],x-wp/2,y,wp,hp);
+  const def=ENEMY[jump.k];if(def&&def.eye)drawEyes(def.eye,x,wp,y,hp,0,1);
+  if(Math.random()<.25){ctx.fillStyle='rgba(255,255,255,.18)';ctx.fillRect(0,0,w,h)}
+}
 
 // ---------- Loop ----------
 function frame(t){
   requestAnimationFrame(frame);
   const dt=Math.min(0.05,(t-last)/1000||0);last=t;
   if(playing&&!overlay){update(dt);updateHud()}
-  if(tex&&overlay!=='map'&&overlay!=='menu'&&overlay!=='setup'&&overlay!=='loading'){render(t);if(cfg.map&&playing)drawMini()}
+  audioTick(dt);
+  if(tex&&overlay!=='map'&&overlay!=='menu'&&overlay!=='setup'&&overlay!=='loading'){
+    render(t);if(cfg.map&&playing)drawMini();
+    if(overlay==='jump'&&jump)drawJump(performance.now());
+  }
   else if(!tex){ctx.fillStyle='#0b1a0b';ctx.fillRect(0,0,cv.width,cv.height)}
 }
 
@@ -1166,6 +1532,8 @@ SP=makeSprites();
 try{setAccentColor(localStorage.getItem('muskox-accent')||'#10b981');setAppTheme(localStorage.getItem('muskox-theme')||'black')}catch(e){setAccentColor('#10b981');setAppTheme('black')}
 resize();refreshUI();last=performance.now();requestAnimationFrame(frame);
 globalThis.__muskox={doStart};
+const audioGesture=()=>{audioInit();syncMusic()};
+addEventListener('pointerdown',audioGesture,true);addEventListener('keydown',audioGesture,true);
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 })();
 </script>
