@@ -1,4 +1,4 @@
-const CACHE='muskox-maze-v4';
+const CACHE='muskox-maze-v5';
 const ASSETS=['./','./index.html','./manifest.json','./icon.png','./small-icon.png'];
 
 self.addEventListener('install',e=>{
