@@ -187,7 +187,7 @@ body.peaceful .dangerOnly{display:none!important}
     <button class="btn alt" id="bSetupSettings"><svg class="ic"><use href="#i-gear"/></svg>Settings</button>
     <span id="best"></span>
   </div>
-  <div class="hint">Left thumb: drag to walk and strafe. Right thumb: drag to look around. Tap the minimap for the full map. Dangerous and Hardcore: collect torches, drop one to banish enemies within 8 tiles. Desktop: WASD to move, mouse to look, left click or Space / F for a torch (see Settings), M map, Esc pause.<br><span id="lifeDeaths"></span></div>
+  <div class="hint">Left thumb: drag to walk and strafe. Right thumb: drag to look around. Tap the minimap for the full map. Dangerous and Hardcore: torches recharge over time; tap the torch button (you can keep walking) to banish enemies within 8 tiles. Desktop: WASD to move, mouse to look, left click or Space / F / T for a torch (see Settings), M map, Esc pause.<br><span id="lifeDeaths"></span></div>
 </div></div>
 
 <!-- SETTINGS (template style) -->
@@ -235,7 +235,7 @@ body.peaceful .dangerOnly{display:none!important}
       <button data-v="kb">Keyboard only</button>
       <button data-v="kbm">Keyboard + Mouse</button>
     </div>
-    <div class="muted" style="margin:6px 0 0">Keyboard only: W A S D move, Q / E or arrow keys look, Space or F drops a torch. Keyboard + Mouse: mouse looks (click the game to capture it), left click or Alt + left click drops a torch. M opens the map, Esc pauses.</div></div>
+    <div class="muted" style="margin:6px 0 0">Keyboard only: W A S D move, Q / E or arrow keys look, Space, F or T drops a torch. Keyboard + Mouse: mouse looks (click the game to capture it), left click or Alt + left click drops a torch. M opens the map, Esc pauses.</div></div>
   <p class="sig">Designed by REAPER-357</p>
 </div></div>
 
@@ -1175,7 +1175,9 @@ $('bMap').addEventListener('click',openMap);
 $('mm').addEventListener('click',openMap);
 $('bComp').addEventListener('click',()=>{cfg.compass=!cfg.compass;save('muskox-cfg',cfg);applyHud()});
 $('bLevel').addEventListener('click',()=>{pitch=0});
-$('dropBtn').addEventListener('click',dropTorch);
+// fire on touch-down (not on click) so it works while another finger is holding the joystick or looking
+$('dropBtn').addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();dropTorch()});
+$('dropBtn').addEventListener('click',e=>{if(e.detail===0)dropTorch()});
 
 const touch=$('touch'),stick=$('stick'),knob=$('knob');
 let moveId=null,lookId=null,ox=0,oy=0,lx=0,ly=0;const SR=55;
@@ -1228,7 +1230,7 @@ addEventListener('keydown',e=>{
     return;
   }
   if(e.code==='KeyM'){if(overlay==='map')setOverlay(null);else openMap();return}
-  if(e.code==='Space'||e.code==='KeyF'){dropTorch();return}
+  if(e.code==='Space'||e.code==='KeyF'||e.code==='KeyT'){if(!e.repeat)dropTorch();e.preventDefault();return}
   keys[e.code]=true;
 });
 addEventListener('keyup',e=>{keys[e.code]=false});
